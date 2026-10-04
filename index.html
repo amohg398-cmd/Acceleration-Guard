@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Acceleration Guard</title>
+<style>
+:root{--bg:#e8edee;--ink:#14232b;--mute:#5d6e76;--card:#f6f9f9;--line:#c3cfd3;--ok:#0f766e;--warn:#b45309;--hot:#be123c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10191d;--ink:#e3ecee;--mute:#8fa2aa;--card:#18252a;--line:#2c3f46;--ok:#3cc4b4;--warn:#f0a43c;--hot:#ff5c84}}
+:root[data-theme="dark"]{--bg:#10191d;--ink:#e3ecee;--mute:#8fa2aa;--card:#18252a;--line:#2c3f46;--ok:#3cc4b4;--warn:#f0a43c;--hot:#ff5c84}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 "Archivo","Segoe UI",system-ui,sans-serif}
+main{max-width:980px;margin:0 auto;padding:16px}
+h1{font-size:26px;margin:4px 0 2px;letter-spacing:-.02em}
+p.sub{margin:0 0 14px;color:var(--mute);max-width:60ch}
+.grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:14px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+button,input{font:inherit;color:var(--ink)}
+button{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+button.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--ok);outline-offset:2px}
+input{width:90px;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px}
+select{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:7px;font:inherit;color:var(--ink)}label{display:block;margin:6px 0}
+.stage{position:relative;border-radius:8px;overflow:hidden;background:#000}
+canvas#view{display:block;width:100%;height:auto;cursor:crosshair;touch-action:none}
+.hint{margin:8px 0 0;color:var(--mute);font-size:13px}
+.state{font-size:22px;font-weight:700;margin:0 0 8px}
+.state.ok{color:var(--ok)}.state.warn{color:var(--warn)}.state.hot{color:var(--hot)}
+.lv{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:8px 0}
+.lv i{height:14px;border-radius:3px;background:var(--line)}
+.lv i.a{background:var(--warn)}.lv i.h{background:var(--hot)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:8px 0;font-variant-numeric:tabular-nums}
+dt{color:var(--mute)}dd{margin:0;text-align:right}
+canvas#graph{width:100%;height:90px;display:block;margin-top:6px;border-radius:6px;background:var(--bg)}
+#log{margin:8px 0 0;padding:0;list-style:none;font-size:13px;max-height:120px;overflow:auto}
+#log li{padding:3px 0;border-top:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<main>
+<h1>Acceleration Guard</h1>
+<p class="sub">Pick a moving target. The page learns its normal speed, watches for acceleration, and fires a click on your chosen spot when it reaches the limit.</p>
+<div class="grid">
+<section class="card">
+  <div class="bar">
+    <button id="bScreen">Share screen</button>
+    <button id="bGame" class="on">Play: catch the speed-up</button>
+    <button id="bGame2">2-player game</button>
+    <button id="bDemo">Run </button>
+    <button id="bTarget" class="on">1. Add target</button>
+    <button id="bSpot">2. Pick click spot</button>
+    <button id="bRoi">Pick region</button>
+    <button id="bClearRoi">Clear region</button>
+    <button id="bRearm">Clear targets</button>
+    <button id="bShare">Share result</button>
+    <button id="bPause">Pause</button>
+    <button id="bRelearn">Relearn normal</button>
+  </div>
+  <div class="stage"><canvas id="view" width="640" height="360"></canvas></div>
+  <p class="hint" id="hint">Start the demo or share a screen, then click the moving object on the picture.</p>
+</section>
+<aside class="card">
+  <div class="bar" id="chips"></div>
+  <p class="state ok" id="state">Waiting for source</p>
+  <canvas id="dial" width="300" height="120" style="width:100%;height:auto;display:block" aria-label="Speed dial"></canvas>
+  <div class="lv" id="lv"><i></i><i></i><i></i><i></i><i></i></div>
+  <dl>
+    <dt>Normal speed</dt><dd id="base">–</dd>
+    <dt>Current speed</dt><dd id="spd">–</dd>
+    <dt>Extra speed</dt><dd id="exc">–</dd>
+    <dt>Peak level</dt><dd id="peak">–</dd>
+  </dl>
+  <label>Sensitivity <select id="preset"><option>Low</option><option selected>Medium</option><option>High</option></select></label>
+  <label>Step <input id="step" type="number" step="0.0005" min="0.0001" value="0.001"></label>
+  <label>Fire at level <select id="fireLv"><option>1</option><option>2</option><option>3</option><option>4</option><option selected>5</option></select></label>
+  <label>Click delay (ms) <input id="delay" type="number" min="0" step="50" value="0"></label>
+  <label>Cooldown (s) <input id="cool" type="number" min="0" value="3"></label>
+  <label>Confirm frames <input id="conf" type="number" min="1" value="3"></label>
+  <label><input id="note" type="checkbox" style="width:auto"> Desktop notification</label>
+  <label><input id="snd" type="checkbox" checked style="width:auto"> Sound and vibration</label>
+  <button id="bCsv">Export CSV</button>
+  <div class="bar" style="margin-top:8px"><button id="bSave">Save to file</button><button id="bLoad">Load from file</button><button id="bAuto">Auto-save: off</button></div>
+  <input id="fileIn" type="file" accept=".json,application/json" hidden>
+  <p class="hint">Speed is the share of frame width moved per frame. Level 1 = 1 step above normal; level 5 fires the click. Keys: P pause, R relearn, 1-3 select target.</p>
+  <canvas id="graph" width="300" height="90"></canvas>
+  <ul id="log"></ul>
+</aside>
+</div>
+<section class="card" style="margin-top:14px">
+  <strong>Unlock Pro for $5</strong>
+  <p class="hint">Free: 1 target, demo and screen sharing. Pro: 3 targets, regions and CSV export. After you pay, your code is sent to your PayPal email.</p>
+  <div class="bar"><a href="https://www.paypal.com/donate/?business=shalimuta%40outlook.com&amp;amount=5&amp;item_name=Acceleration+Guard+Pro&amp;currency_code=USD" target="_blank" rel="noopener"><button type="button" class="on">Pay $5 with PayPal</button></a>
+  <input id="code" placeholder="AG-XXXX-XXXX" style="width:150px" aria-label="Pro code"><button id="bUnlock" type="button">Unlock</button></div>
+  <p class="hint" id="proMsg"></p>
+</section>
+<section class="card" id="shareBox" hidden style="margin-top:14px"><img id="shareImg" alt="Result card" style="max-width:100%;border-radius:8px"><p class="hint">Long-press or right-click the image to save it, or use your phone's share sheet.</p></section>
+<section class="card" id="adbox" hidden style="margin-top:14px"><ins class="adsbygoogle" style="display:block" data-ad-format="auto"></ins></section>
+<section class="card" style="margin-top:14px">
+  <strong>Support this tool</strong>
+  <p class="hint">If Acceleration Guard is useful to you, a donation helps keep it free.</p>
+  <a href="https://www.paypal.com/donate/?business=shalimuta%40outlook.com&amp;item_name=Acceleration+Guard&amp;currency_code=USD" target="_blank" rel="noopener"><button type="button" class="on">Donate with PayPal</button></a>
+</section>
+</main>
+<script>
+(function(){
+const W=640,H=360,SW=320,SH=180,R=8,RANGE=6,CAL=40,COL=['#3cc4b4','#f0a43c','#ff5c84'];
+const $=id=>document.getElementById(id);
+const view=$('view'),vc=view.getContext('2d');
+const small=document.createElement('canvas');small.width=SW;small.height=SH;
+const sc=small.getContext('2d',{willReadFrequently:true});
+const dc=$('dial').getContext('2d');
+const gcv=$('graph'),gc=gcv.getContext('2d');
+const video=document.createElement('video');video.muted=true;video.playsInline=true;
+let fh=null,saveT=0,pro=false,source=null,mode='target',gray=null,roi=null,drag=null,targets=[],act=0,paused=false,alpha=.2,fl=5,ac;
+let rows=[],t0=performance.now(),lastT=t0,ripples=[],demo=null;
+function log(m){const li=document.createElement('li');li.textContent=new Date().toLocaleTimeString()+'  '+m;$('log').prepend(li);
+  if(fh){clearTimeout(saveT);saveT=setTimeout(()=>writeFile(fh,snapshot()).catch(()=>{fh=null;$('bAuto').textContent='Auto-save: off';}),1500);}}
+function setMode(m){mode=m;['Target','Spot','Roi'].forEach(k=>$('b'+k).classList.toggle('on',m===k.toLowerCase()));}
+$('bTarget').onclick=()=>setMode('target');
+$('bSpot').onclick=()=>{setMode('spot');$('hint').textContent='Click where the click should land for the selected target.';};
+$('bRoi').onclick=()=>{if(!pro){$('hint').textContent='Regions are a Pro feature. See Unlock Pro below.';return;}setMode('roi');$('hint').textContent='Drag a box on the picture. Only that area is analyzed.';};
+$('bClearRoi').onclick=()=>{roi=null;log('Region cleared');};
+$('bRearm').onclick=()=>{targets=[];act=0;$('chips').innerHTML='';log('All targets cleared');};
+$('bPause').onclick=e=>{paused=!paused;e.target.textContent=paused?'Resume':'Pause';e.target.classList.toggle('on',paused);};
+$('bRelearn').onclick=()=>{targets.forEach(T=>{T.base=null;T.baseSum=T.baseN=0;T.fired=false;T.hist=[];});log('Relearning normal speed');};
+const PRE={Low:[.1,.002],Medium:[.2,.001],High:[.35,.0005]};
+$('preset').onchange=e=>{const q=PRE[e.target.value];alpha=q[0];$('step').value=q[1];log('Sensitivity: '+e.target.value);};
+$('bCsv').onclick=()=>{if(!pro){$('hint').textContent='CSV export is a Pro feature. See Unlock Pro below.';return;}const c='target,time_s,speed,smoothed,extra,level\n'+rows.map(x=>x.join(',')).join('\n');
+  try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([c],{type:'text/csv'}));a.download='acceleration-guard.csv';a.click();}catch(e){}
+  try{navigator.clipboard.writeText(c).then(()=>log('CSV copied'),()=>{});}catch(e){}
+  log('CSV export: '+rows.length+' rows');};
+function beep(f,d){if(!$('snd').checked)return;try{ac=ac||new AudioContext();ac.resume();const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;g.gain.value=.15;o.connect(g);g.connect(ac.destination);o.start();o.stop(ac.currentTime+d);}catch(e){}}
+let game=null,best=0;try{best=+localStorage.getItem('ag_best')||0;}catch(e){}
+function newBall(){return{t:0,s:0,x:60,y:180,onset:3+Math.random()*3,state:'wait',added:false,guardMs:null,onsetTime:0};}
+function startGame(n){stopScreen();reset();source='game';game={scores:[],b:newBall(),msg:'',summary:'',n:n||1,cur:0,all:[[],[]]};if(game.n===2){game.b.state='ready';game.msg='Player 1: click when ready.';}
+  $('hint').textContent='Click the picture (or press Space) the moment the ball speeds up. 3 rounds, and the guard races you.';}
+$('bGame').onclick=()=>startGame(1);$('bGame2').onclick=()=>startGame(2);
+function nextRound(ok){reset();
+  if(game.scores.length<3){game.b=newBall();game.msg='';return;}
+  const avg=Math.round(game.scores.reduce((a,b)=>a+b,0)/3);
+  if(game.n===2&&game.cur===0){game.all[0]=game.scores;game.cur=1;game.scores=[];game.b=newBall();game.b.state='ready';game.msg='Player 1 average '+avg+' ms. Player 2: click when ready.';return;}
+  if(game.n===2){game.all[1]=game.scores;const a=game.all.map(x=>Math.round(x.reduce((p,q)=>p+q,0)/3));
+    const w=a[0]===a[1]?'Tie!':'Player '+(a[0]<a[1]?1:2)+' wins!';
+    game.msg=w+' P1 '+a[0]+' ms, P2 '+a[1]+' ms. Click to play again.';game.summary=w+' P1 '+a[0]+' ms vs P2 '+a[1]+' ms';game.b.state='over';return;}
+  best=best?Math.min(best,avg):avg;try{localStorage.setItem('ag_best',best);}catch(e){}
+  game.msg='Average '+avg+' ms. Best '+best+' ms. Click to play again.';game.summary='Reaction average '+avg+' ms (best '+best+' ms)';game.b.state='over';}
+function gameHit(){const b=game.b;
+  if(b.state==='ready'){b.state='wait';game.msg='';return;}
+  if(b.state==='wait'){game.msg='Too early! Restarting the round…';b.state='between';setTimeout(()=>nextRound(false),1200);}
+  else if(b.state==='accel'){const rt=Math.round(performance.now()-b.onsetTime),gm=b.guardMs;game.scores.push(rt);
+    game.msg=(game.n===2?'P'+(game.cur+1)+' ':'')+'Round '+game.scores.length+': you '+rt+' ms'+(gm!=null?', guard '+gm+' ms ('+(gm<rt?'guard wins':'you win!')+')':', guard not yet');
+    b.state='between';setTimeout(()=>nextRound(true),1800);}
+  else if(b.state==='over')startGame(game.n);}
+function drawGame(dt){const b=game.b;vc.fillStyle='#16262c';vc.fillRect(0,0,W,H);
+  vc.fillStyle='#22383f';for(let i=0;i<W;i+=40)vc.fillRect(i,0,1,H);for(let j=0;j<H;j+=40)vc.fillRect(0,j,W,1);
+  if(b.state==='wait'||b.state==='accel'){b.t+=dt;if(b.state==='wait'&&b.t>=b.onset){b.state='accel';b.onsetTime=performance.now();}
+    const v=140+(b.state==='accel'?130*(b.t-b.onset):0);b.s+=v*dt;const L=520,p=b.s%(2*L);b.x=60+(p<L?p:2*L-p);
+    const g=vc.createRadialGradient(b.x-5,b.y-6,2,b.x,b.y,18);g.addColorStop(0,'#fff3c4');g.addColorStop(1,'#f0a43c');
+    vc.fillStyle=g;vc.beginPath();vc.arc(b.x,b.y,16,0,7);vc.fill();
+    if(!b.added&&b.t>.4){b.added=true;addTarget(b.x,b.y);}}
+  vc.fillStyle='#e3ecee';vc.font='bold 16px sans-serif';
+  vc.fillText(game.msg||((game.n===2?'Player '+(game.cur+1)+' · ':'')+'Round '+(game.scores.length+1)+' of 3: wait for the speed-up…'),12,26);
+  vc.font='13px sans-serif';vc.fillStyle='#8fa2aa';vc.fillText('Scores: '+(game.scores.join(' ms, ')||'none yet')+(best?'   Best avg: '+best+' ms':''),12,H-12);}
+$('bShare').onclick=()=>{const c=document.createElement('canvas');c.width=800;c.height=460;const x=c.getContext('2d');
+  x.fillStyle='#10191d';x.fillRect(0,0,800,460);x.fillStyle='#3cc4b4';x.font='bold 34px sans-serif';x.fillText('Acceleration Guard',30,56);
+  x.drawImage(view,30,80,400,225);x.fillStyle='#e3ecee';x.font='bold 22px sans-serif';
+  const L=[];if(game&&game.summary&&source==='game')L.push(game.summary);targets.forEach((T,i)=>L.push('T'+(i+1)+' peak level '+(T.peak||0)+' of 5'));
+  if(!L.length)L.push('Track speed. Catch the acceleration.');L.slice(0,3).forEach((l,k)=>x.fillText(l,30,340+k*32));
+  x.fillStyle='#8fa2aa';x.font='16px sans-serif';x.fillText('Can you beat the guard? Try it yourself.',30,445);
+  $('shareImg').src=c.toDataURL('image/png');$('shareBox').hidden=false;$('shareBox').scrollIntoView();
+  c.toBlob(async b=>{try{const f=new File([b],'acceleration-guard.png',{type:'image/png'});if(navigator.canShare&&navigator.canShare({files:[f]}))await navigator.share({files:[f],title:'Acceleration Guard'});}catch(e){}});};
+$('note').onchange=e=>{if(e.target.checked&&'Notification' in window)Notification.requestPermission();};
+addEventListener('keydown',e=>{if(/INPUT|SELECT/.test(e.target.tagName))return;const k=e.key.toLowerCase();
+  if(e.code==='Space'&&source==='game'&&game){e.preventDefault();gameHit();}else if(k==='p')$('bPause').click();else if(k==='r')$('bRelearn').click();else if(k>='1'&&k<='3'&&targets[+k-1])act=+k-1;});
+function snapshot(){const o={app:'acceleration-guard',v:1,savedAt:new Date().toISOString(),best,settings:{},rows:rows.slice(-5000),log:[...$('log').children].map(l=>l.textContent).slice(0,200)};
+  SET.forEach(k=>o.settings[k]=$(k).value);o.settings.snd=$('snd').checked;return JSON.stringify(o,null,1);}
+async function writeFile(h,txt){const w=await h.createWritable();await w.write(txt);await w.close();}
+const FT={types:[{description:'JSON',accept:{'application/json':['.json']}}]};
+$('bSave').onclick=async()=>{const txt=snapshot();
+  try{if(window.showSaveFilePicker){const h=await showSaveFilePicker({suggestedName:'acceleration-guard-save.json',...FT});await writeFile(h,txt);log('Saved to file');return;}}catch(e){if(e.name==='AbortError')return;}
+  try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'application/json'}));a.download='acceleration-guard-save.json';a.click();log('Save downloaded');}catch(e){}
+  try{await navigator.clipboard.writeText(txt);log('Save copied to clipboard');}catch(e){}};
+$('bLoad').onclick=()=>$('fileIn').click();
+$('fileIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  try{const o=JSON.parse(await f.text());if(o.app!=='acceleration-guard')throw 0;
+    SET.forEach(k=>{if(o.settings&&o.settings[k]!==undefined)$(k).value=o.settings[k];});if(o.settings&&typeof o.settings.snd==='boolean')$('snd').checked=o.settings.snd;
+    if(PRE[$('preset').value])alpha=PRE[$('preset').value][0];
+    if(+o.best>0){best=+o.best;try{localStorage.setItem('ag_best',best);}catch(x){}}
+    if(Array.isArray(o.rows))rows=o.rows.filter(q=>Array.isArray(q)&&q.length===6).slice(-5000);
+    (o.log||[]).slice(0,200).reverse().forEach(t=>{const li=document.createElement('li');li.textContent=String(t);$('log').prepend(li);});
+    log('Loaded '+f.name);}catch(x){log('That file is not a valid save');}
+  e.target.value='';};
+$('bAuto').onclick=async()=>{
+  if(fh){fh=null;$('bAuto').textContent='Auto-save: off';return;}
+  if(!window.showSaveFilePicker){log('Auto-save needs Chrome or Edge on a computer');return;}
+  try{fh=await showSaveFilePicker({suggestedName:'acceleration-guard-log.json',...FT});$('bAuto').textContent='Auto-save: on';await writeFile(fh,snapshot());log('Auto-save on');}
+  catch(e){fh=null;}};
+const SET=['step','fireLv','preset','delay','cool','conf'];
+try{const sv=JSON.parse(localStorage.getItem('ag_set')||'{}');SET.forEach(k=>{if(sv[k]!==undefined)$(k).value=sv[k];});if(PRE[$('preset').value])alpha=PRE[$('preset').value][0];}catch(e){}
+SET.forEach(k=>$(k).addEventListener('change',()=>{try{const o={};SET.forEach(q=>o[q]=$(q).value);localStorage.setItem('ag_set',JSON.stringify(o));}catch(e){}}));
+const ADS_CLIENT='',ADS_SLOT='/*ca-pub-6014619496880189 and 2098256653/*';
+if(ADS_CLIENT){const ins=document.querySelector('.adsbygoogle');ins.dataset.adClient=ADS_CLIENT;ins.dataset.adSlot=ADS_SLOT;$('adbox').hidden=false;
+  const sc2=document.createElement('script');sc2.async=true;sc2.crossOrigin='anonymous';sc2.src='https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client='+ADS_CLIENT;
+  sc2.onload=()=>{try{(window.adsbygoogle=window.adsbygoogle||[]).push({});}catch(e){}};document.head.append(sc2);}
+const HASHES=["5601a7286fb96acec3c15b637fde90cce8ffbe3d7f21351c059dcac93c0725e2", "0ab456dadb7358f9e1a77e673fd4bc2395d89cac46080bfacdad9de898e67bd8", "0e109be7da086e41ed45900c57e2d29ea1e8d6acdb542424ff31b15709fa8891", "3369eb56ddc2ff20145cdfe9aaaac8882e3c599e4db7d64188924d571fc7fa1a", "d7c34fac83cae9941f59e4d99bc67b6edb1759e41e229600852256615332d666", "044987e7a77e3fb588bdd6ded076c333a2e2d946946936a36cdd81db40e66191", "d6df138c5bdb0afbf702a056a12d172dc7b1694516693bdf72f06dce30a3f723", "7d7a12dbc523f50306e6e49398adc3c52ec3b22d0f08cd58389c8c884ff3b196", "627db4453f914ad0ed9727d6a844b528679f8bb06045cca977fa7e79677fa293", "5406b35d60fbc13f655cb6eb27c7028407a174c515161dc3ad58e82629bcf5c0", "f74390cdf005ba7688518e53d5d92f6023ada4cb2fe3698a283990d1c492eb24", "4cf920bf55762f34a9a6571fb3d51940923a3c911e31c5d1902e163dd7bf68e9", "a129535ffa75f3bb8d9127145812161b03611dc27f3d7575ab865aee9d40bcc4", "a067aae95648d136f15333851a33a364a854cdee46d85b91c14c98e6be44d4f7", "5bbc468c56000169aeef80eb12221e3d7e89ad036b2c0c34a3e58678def2388f", "06e96b56102df48e6e471c4cb6154ad6849ea83276ca9f8ea4f575128608ade9", "a6f93152933bdc49ecb29a3f4cb39f8bdc4ba6734ef98769c127719c7c001251", "d4cbb59ede9b04fab2026553a988e4ca22813abffe0e5d8d979f38cf9e743774", "de8e919fd6a28b489ddca8bb93723a974d5dfdbd8e10326168e9a1d547e140d3", "1a2da0eb26d0b50f47daa95f95d9fecc64eed4c5069ab040c49ba9ecc5e9a2ee"];
+async function sha(t){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(t.trim().toUpperCase()));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');}
+async function unlock(code){try{const h=await sha(code);if(HASHES.includes(h)){pro=true;$('adbox').hidden=true;try{localStorage.setItem('ag_pro',code);}catch(e){}$('proMsg').textContent='Pro unlocked: 3 targets, regions and CSV export.';log('Pro unlocked');return;}}catch(e){}$('proMsg').textContent='That code is not valid.';}
+$('bUnlock').onclick=()=>unlock($('code').value);
+try{const c=localStorage.getItem('ag_pro');if(c)unlock(c);}catch(e){}
+function reset(){targets=[];act=0;$('chips').innerHTML='';}
+$('bDemo').onclick=()=>{stopScreen();reset();source='demo';
+  demo={t:0,b:[{y:120,v0:150,a:60,s0:5,s1:9,s:0},{y:240,v0:90,a:50,s0:1,s1:6,s:0}]};
+  $('hint').textContent='Demo: two balls. Add each as a target by clicking it.';};
+$('bScreen').onclick=async()=>{
+  try{const st=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false});
+    video.srcObject=st;await video.play();reset();source='screen';
+    st.getVideoTracks()[0].onended=()=>{source=null;$('state').textContent='Sharing stopped';};
+    $('hint').textContent='Sharing. Click up to 3 moving objects.';
+  }catch(e){$('hint').textContent='Screen sharing was blocked here ('+e.name+'). Run the demo, or open the saved file directly in a browser.';}
+};
+function stopScreen(){if(video.srcObject){video.srcObject.getTracks().forEach(t=>t.stop());video.srcObject=null;}}
+
+function pt(e){const r=view.getBoundingClientRect();return{x:(e.clientX-r.left)*W/r.width,y:(e.clientY-r.top)*H/r.height};}
+view.addEventListener('pointerdown',e=>{
+  if(!source||e.isTrusted===false)return;if(source==='game'){gameHit();return;}const p=pt(e);
+  if(mode==='roi'){drag={x:p.x,y:p.y,x2:p.x,y2:p.y};view.setPointerCapture(e.pointerId);}
+  else if(mode==='target')addTarget(p.x,p.y);
+  else if(targets[act]){targets[act].spot={x:p.x,y:p.y};log('T'+(act+1)+' click spot set');setMode('target');}
+});
+view.addEventListener('pointermove',e=>{if(drag){const p=pt(e);drag.x2=p.x;drag.y2=p.y;}});
+view.addEventListener('pointerup',()=>{if(!drag)return;
+  const x0=Math.min(drag.x,drag.x2),x1=Math.max(drag.x,drag.x2),y0=Math.min(drag.y,drag.y2),y1=Math.max(drag.y,drag.y2);
+  if(x1-x0>50&&y1-y0>50){roi={x0,y0,x1,y1};log('Region set');}drag=null;setMode('target');});
+
+function grab(){sc.drawImage(view,0,0,SW,SH);const d=sc.getImageData(0,0,SW,SH).data;
+  if(!gray)gray=new Float32Array(SW*SH);
+  for(let i=0,j=0;i<gray.length;i++,j+=4)gray[i]=d[j]*.3+d[j+1]*.59+d[j+2]*.11;}
+function bounds(){return roi?[roi.x0*SW/W,roi.y0*SH/H,roi.x1*SW/W,roi.y1*SH/H]:[0,0,SW,SH];}
+function addTarget(x,y){
+  if(targets.length>=(pro?3:1)){$('hint').textContent=pro?'Up to 3 targets. Press Clear targets to start over.':'The free version tracks 1 target. Unlock Pro for 3 targets, regions and CSV export.';return;}
+  grab();const cx=Math.round(x*SW/W),cy=Math.round(y*SH/H),b=bounds();
+  if(cx-R<b[0]||cy-R<b[1]||cx+R>=b[2]||cy+R>=b[3]){$('hint').textContent='Pick a point inside the region and away from the edge.';return;}
+  const n=2*R+1,tpl=new Float32Array(n*n);let k=0;
+  for(let yy=-R;yy<=R;yy++)for(let xx=-R;xx<=R;xx++)tpl[k++]=gray[(cy+yy)*SW+cx+xx];
+  const i=targets.length,chip=document.createElement('button');
+  chip.style.borderColor=COL[i];chip.onclick=()=>{act=i;};$('chips').append(chip);
+  targets.push({pos:{x:cx,y:cy},tpl,base:null,baseSum:0,baseN:0,vs:0,exc:null,fired:false,cool:0,hist:[],lastLvl:0,lvl:0,txt:'learning',cls:'ok',spot:null,lost:false,ll:false,chip});
+  act=i;log('T'+(i+1)+' locked. Learning normal speed…');
+}
+function sad(T,cx,cy){let s=0,k=0;
+  for(let y=-R;y<=R;y++){const row=(cy+y)*SW+cx;for(let x=-R;x<=R;x++)s+=Math.abs(gray[row+x]-T.tpl[k++]);}return s;}
+function track(T){
+  const b=bounds(),bx=Math.round(T.pos.x),by=Math.round(T.pos.y),n=2*RANGE+1,sc2=new Float32Array(n*n);
+  let best=Infinity,bi=0;
+  for(let oy=-RANGE;oy<=RANGE;oy++)for(let ox=-RANGE;ox<=RANGE;ox++){
+    const cx=bx+ox,cy=by+oy;let v=1e12;
+    if(cx-R>=b[0]&&cy-R>=b[1]&&cx+R<b[2]&&cy+R<b[3])v=sad(T,cx,cy);
+    const i=(oy+RANGE)*n+ox+RANGE;sc2[i]=v;if(v<best){best=v;bi=i;}}
+  if(best/((2*R+1)**2)>40)return false;
+  const ox=bi%n,oy=(bi/n)|0;let fx=0,fy=0;
+  if(ox>0&&ox<n-1){const a=sc2[bi-1],c=sc2[bi+1],d=a-2*sc2[bi]+c;if(d>0&&c<1e11&&a<1e11)fx=.5*(a-c)/d;}
+  if(oy>0&&oy<n-1){const a=sc2[bi-n],c=sc2[bi+n],d=a-2*sc2[bi]+c;if(d>0&&c<1e11&&a<1e11)fy=.5*(a-c)/d;}
+  T.pos={x:bx+ox-RANGE+fx,y:by+oy-RANGE+fy};return true;
+}
+function fire(T,i){
+  T.fired=true;if(source==='game'&&game&&game.b.state==='accel'&&game.b.guardMs==null)game.b.guardMs=Math.round(performance.now()-game.b.onsetTime);T.cool=performance.now()+(+$('cool').value||0)*1000;
+  beep(1000,.4);if($('snd').checked&&navigator.vibrate)navigator.vibrate([200,100,200]);
+  const stg=document.querySelector('.stage');stg.style.outline='4px solid var(--hot)';setTimeout(()=>stg.style.outline='',700);
+  try{if($('note').checked&&'Notification' in window&&Notification.permission==='granted')new Notification('Acceleration Guard',{body:'T'+(i+1)+' reached the limit'});}catch(e){}
+  setTimeout(()=>doClick(T,i),+$('delay').value||0);
+}
+function doClick(T,i){
+  if(T.spot){ripples.push({x:T.spot.x,y:T.spot.y,a:1,c:COL[i]});
+    const r=view.getBoundingClientRect();
+    view.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:r.left+T.spot.x*r.width/W,clientY:r.top+T.spot.y*r.height/H}));
+    log('T'+(i+1)+' LIMIT → click at '+Math.round(T.spot.x)+', '+Math.round(T.spot.y));
+  }else log('T'+(i+1)+' LIMIT, but no click spot is set.');
+}
+function stepT(T,i,dt){
+  const bx=T.pos.x,by=T.pos.y;
+  if(!track(T)){T.lost=true;if(!T.ll){log('T'+(i+1)+' lost');T.ll=true;}T.chip.textContent='T'+(i+1)+': lost';return;}
+  T.ll=false;T.lost=false;(T.trail=T.trail||[]).push({x:T.pos.x,y:T.pos.y});if(T.trail.length>40)T.trail.shift();
+  const v=Math.hypot(T.pos.x-bx,T.pos.y-by)/SW*(1/60)/Math.max(dt,.004);
+  T.vs=T.vs?T.vs*(1-alpha)+v*alpha:v;
+  const st=parseFloat($('step').value)||.001;
+  if(T.base===null){T.baseSum+=T.vs;if(++T.baseN>=CAL){T.base=T.baseSum/T.baseN;log('T'+(i+1)+' normal speed '+T.base.toFixed(4));}
+    T.txt='learning '+Math.round(T.baseN/CAL*100)+'%';T.cls='ok';T.lvl=0;}
+  else{
+    const exc=T.vs-T.base,lvl=Math.max(0,Math.min(5,Math.floor(exc/st)));T.exc=exc;
+    if(lvl>T.lastLvl&&lvl<fl)beep(400+lvl*90,.08);T.lastLvl=lvl;T.lvl=lvl;T.peak=Math.max(T.peak||0,lvl);T.hold=lvl>=fl?(T.hold||0)+1:0;
+    T.hist.push(exc);if(T.hist.length>300)T.hist.shift();
+    if(rows.length<20000)rows.push([i+1,((performance.now()-t0)/1000).toFixed(3),v.toFixed(5),T.vs.toFixed(5),exc.toFixed(5),lvl]);
+    if(lvl===0){T.txt='Normal';T.cls='ok';if(T.fired){T.fired=false;log('T'+(i+1)+' back to normal');}}
+    else if(lvl<fl){T.txt='Accelerating: level '+lvl+' of '+fl;T.cls='warn';}
+    else{T.txt=T.fired?'LIMIT (click sent)':'LIMIT';T.cls='hot';if(!T.fired&&performance.now()>=T.cool&&T.hold>=(+$('conf').value||1))fire(T,i);}
+  }
+  T.chip.textContent='T'+(i+1)+': '+T.txt;
+}
+function setState(txt,cls,lvl){const s=$('state');s.textContent=txt;s.className='state '+cls;
+  [...$('lv').children].forEach((el,i)=>{el.className=i<lvl?(lvl>=fl?'h':'a'):'';});}
+function panel(){
+  targets.forEach((T,i)=>T.chip.classList.toggle('on',i===act));
+  const T=targets[act];
+  if(!T){setState('Add a target','ok',0);dial(null,.001);['base','spd','exc','peak'].forEach(k=>$(k).textContent='–');return;}
+  if(T.lost)setState('T'+(act+1)+' lost. Add it again.','warn',0);else setState('T'+(act+1)+': '+T.txt,T.cls,T.lvl);
+  $('base').textContent=T.base===null?'–':T.base.toFixed(4);$('spd').textContent=T.vs.toFixed(4);
+  $('exc').textContent=T.exc===null?'–':(T.exc>=0?'+':'')+T.exc.toFixed(4);
+  $('peak').textContent=T.peak||0;dial(T,parseFloat($('step').value)||.001);
+  graph(T,parseFloat($('step').value)||.001);
+}
+function dial(T,st){const cx=150,cy=108,Rr=90;dc.clearRect(0,0,300,120);dc.lineWidth=14;
+  for(let i=0;i<5;i++){dc.strokeStyle=i+1>=fl?'#be123c':(i<2?'#0f766e':'#b45309');dc.beginPath();dc.arc(cx,cy,Rr,Math.PI+i*Math.PI/5+.02,Math.PI+(i+1)*Math.PI/5-.02);dc.stroke();}
+  const f=T&&T.exc!=null?Math.max(0,Math.min(1,T.exc/(5*st))):0,a=Math.PI+f*Math.PI;
+  dc.strokeStyle=dc.fillStyle=getComputedStyle(document.body).color;dc.lineWidth=3;dc.beginPath();dc.moveTo(cx,cy);dc.lineTo(cx+Math.cos(a)*(Rr-18),cy+Math.sin(a)*(Rr-18));dc.stroke();
+  dc.beginPath();dc.arc(cx,cy,6,0,7);dc.fill();}
+function graph(T,st){
+  const w=gcv.width,h=gcv.height;gc.clearRect(0,0,w,h);const top=st*6;
+  gc.strokeStyle='rgba(143,162,170,.5)';gc.lineWidth=1;gc.fillStyle='#8fa2aa';gc.font='10px sans-serif';
+  for(let i=1;i<=5;i++){const y=h-(i*st/top)*h;gc.beginPath();gc.moveTo(0,y);gc.lineTo(w,y);gc.stroke();gc.fillText(i,2,y-2);}
+  gc.strokeStyle=COL[act];gc.lineWidth=2;gc.beginPath();
+  T.hist.forEach((e,i)=>{const x=i/300*w,y=h-Math.max(0,Math.min(1,e/top))*h;i?gc.lineTo(x,y):gc.moveTo(x,y);});gc.stroke();
+}
+function drawDemo(dt){
+  demo.t+=dt;vc.fillStyle='#16262c';vc.fillRect(0,0,W,H);
+  vc.fillStyle='#22383f';for(let i=0;i<W;i+=40)vc.fillRect(i,0,1,H);for(let j=0;j<H;j+=40)vc.fillRect(0,j,W,1);
+  demo.b.forEach(b=>{const ph=demo.t%12;let v=b.v0;if(ph>=b.s0&&ph<b.s1)v+=b.a*(ph-b.s0);
+    b.s+=v*dt;const L=520,p=b.s%(2*L),x=60+(p<L?p:2*L-p);
+    const g=vc.createRadialGradient(x-5,b.y-6,2,x,b.y,18);g.addColorStop(0,'#fff3c4');g.addColorStop(1,'#f0a43c');
+    vc.fillStyle=g;vc.beginPath();vc.arc(x,b.y,16,0,7);vc.fill();});
+}
+function overlay(){
+  if(roi){vc.fillStyle='rgba(0,0,0,.45)';vc.fillRect(0,0,W,roi.y0);vc.fillRect(0,roi.y1,W,H-roi.y1);vc.fillRect(0,roi.y0,roi.x0,roi.y1-roi.y0);vc.fillRect(roi.x1,roi.y0,W-roi.x1,roi.y1-roi.y0);
+    vc.strokeStyle='#fff';vc.setLineDash([6,4]);vc.lineWidth=1;vc.strokeRect(roi.x0,roi.y0,roi.x1-roi.x0,roi.y1-roi.y0);vc.setLineDash([]);}
+  if(drag){vc.strokeStyle='#fff';vc.setLineDash([6,4]);vc.strokeRect(drag.x,drag.y,drag.x2-drag.x,drag.y2-drag.y);vc.setLineDash([]);}
+  targets.forEach((T,i)=>{if(T.trail&&T.trail.length>1){vc.strokeStyle=COL[i];vc.globalAlpha=.5;vc.lineWidth=1.5;vc.beginPath();T.trail.forEach((q,k)=>{const a=q.x*W/SW,b=q.y*H/SH;k?vc.lineTo(a,b):vc.moveTo(a,b);});vc.stroke();vc.globalAlpha=1;}
+  const x=T.pos.x*W/SW,y=T.pos.y*H/SH;vc.strokeStyle=COL[i];vc.lineWidth=2;vc.strokeRect(x-R*2,y-R*2,R*4,R*4);
+    vc.fillStyle=COL[i];vc.font='bold 12px sans-serif';vc.fillText('T'+(i+1),x-R*2,y-R*2-4);
+    if(T.spot){vc.beginPath();vc.arc(T.spot.x,T.spot.y,10,0,7);vc.moveTo(T.spot.x-16,T.spot.y);vc.lineTo(T.spot.x+16,T.spot.y);vc.moveTo(T.spot.x,T.spot.y-16);vc.lineTo(T.spot.x,T.spot.y+16);vc.stroke();}});
+  ripples=ripples.filter(q=>q.a>0);ripples.forEach(q=>{vc.strokeStyle=q.c;vc.globalAlpha=q.a;vc.lineWidth=3;vc.beginPath();vc.arc(q.x,q.y,10+(1-q.a)*50,0,7);vc.stroke();vc.globalAlpha=1;q.a-=.03;});
+}
+function loop(now){
+  const dt=Math.min((now-lastT)/1000,.1);lastT=now;
+  if(paused){requestAnimationFrame(loop);return;}
+  if(source==='demo')drawDemo(dt);else if(source==='game')drawGame(dt);
+  else if(source==='screen'&&video.videoWidth)vc.drawImage(video,0,0,W,H);
+  else{vc.fillStyle='#16262c';vc.fillRect(0,0,W,H);}
+  if(source){grab();targets.forEach((T,i)=>stepT(T,i,dt));panel();overlay();}
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
